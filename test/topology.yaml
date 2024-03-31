@@ -1,0 +1,57 @@
+name: aya-lb-dr
+
+topology:
+  nodes:
+    client:
+      kind: linux
+      image: nicolaka/netshoot
+      exec:
+        - ip addr add 192.168.31.100/24 dev eth1
+
+    lb:
+      kind: linux
+      image: lb:local
+      exec:
+        - ip addr add 192.168.31.60/24 dev eth1
+        - ip addr add 192.168.31.50/24 dev eth1
+        - sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
+      binds:
+        - ../:/opt/lb
+
+    back1:
+      kind: linux
+      image: back:local
+      exec:
+        - ip addr add 192.168.31.61/24 dev eth1
+        - ip addr add 192.168.31.50/32 dev lo
+        - sh -c "echo 1 > /proc/sys/net/ipv4/conf/all/arp_ignore"
+        - sh -c "echo 2 > /proc/sys/net/ipv4/conf/all/arp_announce"
+    back2:
+      kind: linux
+      image: back:local
+      exec:
+        - ip addr add 192.168.31.62/24 dev eth1
+        - ip addr add 192.168.31.50/32 dev lo
+        - sh -c "echo 1 > /proc/sys/net/ipv4/conf/all/arp_ignore"
+        - sh -c "echo 2 > /proc/sys/net/ipv4/conf/all/arp_announce"
+
+    aya-br0:
+      kind: bridge
+
+  links:
+    - endpoints: ["client:eth1", "aya-br0:aya-port1"]
+    - endpoints: ["lb:eth1", "aya-br0:aya-port2"]
+    - type: veth
+      endpoints:
+      - node: back1
+        interface: eth1
+        mac: 30:33:11:11:11:11
+      - node: aya-br0
+        interface: aya-port3
+    - type: veth
+      endpoints:
+      - node: back2
+        interface: eth1
+        mac: 30:33:22:22:22:22
+      - node: aya-br0
+        interface: aya-port4
