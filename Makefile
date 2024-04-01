@@ -31,7 +31,7 @@ clean: destroy
 
 mrproper:
 	rm -Rf ./clab-aya-lb-dr
-	docker image rm lb:local
-	docker image rm back:local
+	docker image rm lb:local || true
+	docker image rm back:local || true
 
 	

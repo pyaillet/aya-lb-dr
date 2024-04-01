@@ -1,19 +1,37 @@
 #![no_std]
 #![no_main]
 
-use aya_ebpf::{bindings::xdp_action, macros::xdp, programs::XdpContext};
-use aya_log_ebpf::info;
+use aya_ebpf::{
+    bindings::xdp_action,
+    macros::{map, xdp},
+    maps::HashMap,
+    programs::XdpContext,
+};
+use aya_log_ebpf::*;
 
 use core::mem;
 use network_types::{
     eth::{EthHdr, EtherType},
-    ip::{IpProto, Ipv4Hdr},
+    ip::Ipv4Hdr,
     tcp::TcpHdr,
 };
 
+use lb_dr_common::{
+    Backend, BackendList, ClientKey, Frontend, BACKENDS_ARRAY_CAPACITY, BPF_MAPS_CAPACITY,
+};
+
+#[map(name = "LOADBALANCERS")]
+static mut LOADBALANCERS: HashMap<Frontend, BackendList> =
+    HashMap::<Frontend, BackendList>::with_max_entries(BPF_MAPS_CAPACITY, 0);
+
+#[map(name = "CONNECTIONS")]
+static mut CONNECTIONS: HashMap<ClientKey, Backend> =
+    HashMap::<ClientKey, Backend>::with_max_entries(32768, 0);
+
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    unsafe { core::hint::unreachable_unchecked() }
+    loop {}
+    // unsafe { core::hint::unreachable_unchecked() }
 }
 
 #[xdp]
@@ -38,7 +56,7 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*mut T, ()> {
 }
 
 fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
-    info!(&ctx, "Received a packet");
+    trace!(&ctx, "Received a packet");
     let ethhdr: *mut EthHdr = ptr_at(&ctx, 0)?;
     match unsafe { (*ethhdr).ether_type } {
         EtherType::Ipv4 => {}
@@ -46,31 +64,65 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     }
 
     let ipv4hdr: *const Ipv4Hdr = ptr_at(&ctx, EthHdr::LEN)?;
-    let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
-    info!(&ctx, "SRC IP: {:i}", source_addr);
+    let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
 
-    let tcphdr: *const TcpHdr = match unsafe { (*ipv4hdr).proto } {
-        IpProto::Tcp => ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?,
-        _ => return Ok(xdp_action::XDP_PASS),
+    let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
+    trace!(&ctx, "SRC IP: {:i}", source_addr);
+
+    // Check if the destination address is managed by the lb
+    let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
+    trace!(&ctx, "DST IP: {:i}", dest_addr);
+
+    let source_port = u16::from_be(unsafe { (*tcphdr).source });
+    let dest_port = u16::from_be(unsafe { (*tcphdr).dest });
+
+    let client_key = ClientKey {
+        ip: source_addr,
+        port: source_port,
     };
 
-    // Check if the destination address and ports are managed by the lb
-    let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
-    let dest_port = u16::from_be(unsafe { (*tcphdr).dest });
-    // find a way to translate "192.168.31.50" to 0xc0a81f32
-    if dest_addr == 0xc0a81f32 && dest_port == 80_u16 {
-        // Get previous destination hw address to set it as source for the reemitted frame
-        let old_dst_addr: [u8; 6] = unsafe { (*ethhdr).dst_addr };
-        unsafe {
-            (*ethhdr).src_addr = old_dst_addr;
-        }
-        // Set the backend hw address in the emitted frame
-        unsafe {
-            (*ethhdr).dst_addr = [0x30, 0x33, 0x11, 0x11, 0x11, 0x11];
-        }
-    } else {
-        return Ok(xdp_action::XDP_PASS);
+    if let Some(back) = unsafe { CONNECTIONS.get(&client_key) } {
+        debug!(&ctx, "Previous connection found for this client");
+        return redirect(ethhdr, *back);
     }
 
+    if let Some(backends) = unsafe { LOADBALANCERS.get(&dest_addr) } {
+        debug!(&ctx, "Frontend found for this request");
+        if backends.backends_len > 0 {
+            debug!(&ctx, "Backend found",);
+            let mut idx: u16 = 0;
+            if backends.backend_idx < backends.backends_len {
+                idx = backends.backend_idx.into();
+            };
+            if usize::from(idx) >= BACKENDS_ARRAY_CAPACITY {
+                return Ok(xdp_action::XDP_PASS);
+            }
+
+            let mut b = backends.clone();
+            b.backend_idx = idx + 1;
+            if unsafe { LOADBALANCERS.insert(&dest_addr, &b, 0) }.is_err() {
+                warn!(&ctx, "Unable to update lb backend");
+            }
+
+            if unsafe { CONNECTIONS.insert(&client_key, &backends.backends[usize::from(idx)], 0) }.is_err() {
+                warn!(&ctx, "Unable to update connection");
+            }
+            return redirect(ethhdr, backends.backends[usize::from(idx)]);
+        } else {
+            debug!(&ctx, "no backend found");
+        }
+    } else {
+        trace!(&ctx, "No frontend found");
+    }
+    Ok(xdp_action::XDP_PASS)
+}
+
+#[inline(always)]
+fn redirect(ethhdr: *mut EthHdr, backend: Backend) -> Result<u32, ()> {
+    // Get previous destination hw address to set it as source for the reemitted frame
+    let old_dst_addr: [u8; 6] = unsafe { (*ethhdr).dst_addr };
+    unsafe { (*ethhdr).src_addr = old_dst_addr };
+    // Set the backend hw address in the emitted frame
+    unsafe { (*ethhdr).dst_addr = backend };
     Ok(xdp_action::XDP_TX)
 }
