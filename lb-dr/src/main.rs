@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::fs;
 
 use anyhow::Context;
 use aya::maps::HashMap;
@@ -10,24 +10,35 @@ use lb_dr_common::{BackendList, Frontend};
 use log::{debug, info, warn};
 use tokio::signal;
 
+mod config;
+
 #[derive(Debug, Parser)]
 struct Opt {
     #[clap(short, long, default_value = "eth0")]
     iface: String,
+    #[clap(short, long, default_value = "config.toml")]
+    config_file: String,
 }
 
-fn init_config(bpf: &mut Ebpf) -> anyhow::Result<()> {
+fn init_config(bpf: &mut Ebpf, config_file: &str) -> anyhow::Result<()> {
     let mut loadbalancers: HashMap<_, Frontend, BackendList> =
         HashMap::try_from(bpf.map_mut("LOADBALANCERS").unwrap())?;
-    let f1: Frontend = Ipv4Addr::new(192, 168, 31, 50).into();
-    let mut backends = BackendList {
-        backends: [[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; 64],
-        backends_len: 2,
-        backend_idx: 0,
-    };
-    backends.backends[0] = [0x30, 0x33, 0x11, 0x11, 0x11, 0x11];
-    backends.backends[1] = [0x30, 0x33, 0x22, 0x22, 0x22, 0x22];
-    loadbalancers.insert(f1, backends, 0)?;
+
+    let config = fs::read_to_string(config_file)?;
+    let config: config::Config = toml::from_str(&config)?;
+
+    for server in config.servers.unwrap_or(vec![]) {
+        let frontend: Frontend = server.ip.into();
+        let mut backends = BackendList {
+            backends: [[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; 64],
+            backends_len: 2,
+            backend_idx: 0,
+        };
+        for (i, backend) in server.backends.iter().enumerate() {
+            backends.backends[i] = backend.bytes();
+        }
+        loadbalancers.insert(frontend, backends, 0)?;
+    }
     info!("Default configuration initialized");
     Ok(())
 }
@@ -75,7 +86,7 @@ async fn main() -> Result<(), anyhow::Error> {
     program.attach(&opt.iface, XdpFlags::SKB_MODE)
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
-    if let Err(e) = init_config(&mut bpf) {
+    if let Err(e) = init_config(&mut bpf, &opt.config_file) {
         warn!("error initializing config: {}", e);
     }
 
