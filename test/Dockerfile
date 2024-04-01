@@ -7,7 +7,7 @@ RUN apt-get update \
 
 COPY ./target/release/lb-dr /opt/lb-dr/lb-dr
 
-ENV RUST_LOG=trace
+ENV RUST_LOG=info
 
 # Wait for 3 second for the container to get its eth1 interface
 CMD ["sh", "-c", "sleep 3 && /opt/lb-dr/lb-dr -i eth1"]

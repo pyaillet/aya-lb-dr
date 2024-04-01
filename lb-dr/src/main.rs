@@ -21,10 +21,12 @@ fn init_config(bpf: &mut Ebpf) -> anyhow::Result<()> {
         HashMap::try_from(bpf.map_mut("LOADBALANCERS").unwrap())?;
     let f1: Frontend = Ipv4Addr::new(192, 168, 31, 50).into();
     let mut backends = BackendList {
-        backends: [[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; 128],
-        backends_len: 1,
+        backends: [[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; 64],
+        backends_len: 2,
+        backend_idx: 0,
     };
     backends.backends[0] = [0x30, 0x33, 0x11, 0x11, 0x11, 0x11];
+    backends.backends[1] = [0x30, 0x33, 0x22, 0x22, 0x22, 0x22];
     loadbalancers.insert(f1, backends, 0)?;
     info!("Default configuration initialized");
     Ok(())
