@@ -17,7 +17,7 @@ use network_types::{
 };
 
 use lb_dr_common::{
-    Backend, BackendList, ClientKey, Frontend, BACKENDS_ARRAY_CAPACITY, BPF_MAPS_CAPACITY,
+    Backend, BackendList, ClientKey, Frontend, BACKENDS_ARRAY_CAPACITY, BPF_MAPS_CAPACITY
 };
 
 #[map(name = "LOADBALANCERS")]
@@ -30,8 +30,7 @@ static mut CONNECTIONS: HashMap<ClientKey, Backend> =
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-    // unsafe { core::hint::unreachable_unchecked() }
+    unsafe { core::hint::unreachable_unchecked() }
 }
 
 #[xdp]
@@ -67,18 +66,24 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
 
     let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
-    trace!(&ctx, "SRC IP: {:i}", source_addr);
+    let source_port = u16::from_be(unsafe { (*tcphdr).source });
+    trace!(&ctx, "SRC IP: {:i}, SRC PORT: {}", source_addr, source_port);
 
     // Check if the destination address is managed by the lb
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
-    trace!(&ctx, "DST IP: {:i}", dest_addr);
-
-    let source_port = u16::from_be(unsafe { (*tcphdr).source });
     let dest_port = u16::from_be(unsafe { (*tcphdr).dest });
+    trace!(&ctx, "DST IP: {:i}, DST PORT: {}", dest_addr, dest_port);
+
+    let lb_key = Frontend {
+        ip: dest_addr,
+        port: dest_port,
+        fill: 0, // Necessary, otherwise the struct might be filled with 0xFFFF
+    };
 
     let client_key = ClientKey {
         ip: source_addr,
         port: source_port,
+        fill: 0, // Necessary, otherwise the struct might be filled with 0xFFFF
     };
 
     if let Some(back) = unsafe { CONNECTIONS.get(&client_key) } {
@@ -86,7 +91,7 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
         return redirect(ethhdr, *back);
     }
 
-    if let Some(backends) = unsafe { LOADBALANCERS.get(&dest_addr) } {
+    if let Some(backends) = unsafe { LOADBALANCERS.get(&lb_key) } {
         debug!(&ctx, "Frontend found for this request");
         if backends.backends_len > 0 {
             debug!(&ctx, "Backend found",);
@@ -100,7 +105,7 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
 
             let mut b = backends.clone();
             b.backend_idx = idx + 1;
-            if unsafe { LOADBALANCERS.insert(&dest_addr, &b, 0) }.is_err() {
+            if unsafe { LOADBALANCERS.insert(&lb_key, &b, 0) }.is_err() {
                 warn!(&ctx, "Unable to update lb backend");
             }
 

@@ -1,13 +1,14 @@
 #![no_std]
 
 pub const BACKENDS_ARRAY_CAPACITY: usize = 64;
-pub const BPF_MAPS_CAPACITY: u32 = 64;
+pub const BPF_MAPS_CAPACITY: u32 = 128;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct ClientKey {
     pub ip: u32,
     pub port: u16,
+    pub fill: u16,
 }
 
 pub type Backend = [u8; 6];
@@ -21,7 +22,13 @@ pub struct BackendList {
     pub backend_idx: u16,
 }
 
-pub type Frontend = u32;
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct Frontend {
+    pub ip: u32,
+    pub port: u16,
+    pub fill: u16,
+}
 
 #[cfg(feature = "user")]
 mod user {
@@ -29,4 +36,5 @@ mod user {
 
     unsafe impl aya::Pod for BackendList {}
     unsafe impl aya::Pod for ClientKey {}
+    unsafe impl aya::Pod for Frontend {}
 }

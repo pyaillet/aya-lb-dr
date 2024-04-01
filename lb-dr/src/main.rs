@@ -28,7 +28,11 @@ fn init_config(bpf: &mut Ebpf, config_file: &str) -> anyhow::Result<()> {
     let config: config::Config = toml::from_str(&config)?;
 
     for server in config.servers.unwrap_or(vec![]) {
-        let frontend: Frontend = server.ip.into();
+        let frontend: Frontend = Frontend {
+            ip: server.ip.into(),
+            port: server.port,
+            fill: 0,
+        };
         let mut backends = BackendList {
             backends: [[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; 64],
             backends_len: 2,

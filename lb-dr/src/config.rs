@@ -12,6 +12,7 @@ pub struct Config {
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 pub struct ServerConfig {
     pub ip: Ipv4Addr,
+    pub port: u16,
     pub backends: Vec<MacAddress>,
 }
 
@@ -26,6 +27,7 @@ mod tests {
             servers: Some(vec![
                 ServerConfig {
                     ip: Ipv4Addr::new(192, 168, 31, 50),
+                    port: 80,
                     backends: vec![
                         MacAddress::new([0x30, 0x33, 0x11, 0x11, 0x11, 0x11]),
                         MacAddress::new([0x30, 0x33, 0x22, 0x22, 0x22, 0x22]),
@@ -36,6 +38,7 @@ mod tests {
         let toml_str = r#"
         [[servers]]
         ip = "192.168.31.50"
+        port = 80
         backends = ["30:33:11:11:11:11", "30:33:22:22:22:22"]
     "#;
 
