@@ -4,7 +4,7 @@
 use aya_ebpf::{
     bindings::xdp_action,
     macros::{map, xdp},
-    maps::HashMap,
+    maps::{HashMap, LruHashMap},
     programs::XdpContext,
 };
 use aya_log_ebpf::*;
@@ -17,7 +17,7 @@ use network_types::{
 };
 
 use lb_dr_common::{
-    Backend, BackendList, ClientKey, Frontend, BACKENDS_ARRAY_CAPACITY, BPF_MAPS_CAPACITY
+    Backend, BackendList, ClientKey, Frontend, BACKENDS_ARRAY_CAPACITY, BPF_MAPS_CAPACITY,
 };
 
 #[map(name = "LOADBALANCERS")]
@@ -25,8 +25,8 @@ static mut LOADBALANCERS: HashMap<Frontend, BackendList> =
     HashMap::<Frontend, BackendList>::with_max_entries(BPF_MAPS_CAPACITY, 0);
 
 #[map(name = "CONNECTIONS")]
-static mut CONNECTIONS: HashMap<ClientKey, Backend> =
-    HashMap::<ClientKey, Backend>::with_max_entries(32768, 0);
+static mut CONNECTIONS: LruHashMap<ClientKey, Backend> =
+    LruHashMap::<ClientKey, Backend>::with_max_entries(8198, 0);
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
@@ -88,6 +88,11 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
 
     if let Some(back) = unsafe { CONNECTIONS.get(&client_key) } {
         debug!(&ctx, "Previous connection found for this client");
+        if unsafe { (*tcphdr).rst() } == 1_u16 {
+            if unsafe { CONNECTIONS.remove(&client_key) }.is_err() {
+                warn!(&ctx, "Unable to remove connection");
+            }
+        }
         return redirect(ethhdr, *back);
     }
 
@@ -109,7 +114,15 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
                 warn!(&ctx, "Unable to update lb backend");
             }
 
-            if unsafe { CONNECTIONS.insert(&client_key, &backends.backends[usize::from(idx)], 0) }.is_err() {
+            if unsafe { (*tcphdr).rst() } == 1_u16 {
+                if unsafe { CONNECTIONS.remove(&client_key) }.is_err() {
+                    warn!(&ctx, "Unable to remove connection");
+                }
+            } else if unsafe {
+                CONNECTIONS.insert(&client_key, &backends.backends[usize::from(idx)], 0)
+            }
+            .is_err()
+            {
                 warn!(&ctx, "Unable to update connection");
             }
             return redirect(ethhdr, backends.backends[usize::from(idx)]);
