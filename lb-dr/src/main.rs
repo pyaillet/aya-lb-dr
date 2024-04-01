@@ -30,8 +30,7 @@ fn init_config(bpf: &mut Ebpf, config_file: &str) -> anyhow::Result<()> {
     for server in config.servers.unwrap_or(vec![]) {
         let frontend: Frontend = Frontend {
             ip: server.ip.into(),
-            port: server.port,
-            fill: 0,
+            port: server.port.into(),
         };
         let mut backends = BackendList {
             backends: [[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; 64],

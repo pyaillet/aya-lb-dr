@@ -7,8 +7,7 @@ pub const BPF_MAPS_CAPACITY: u32 = 128;
 #[repr(C)]
 pub struct ClientKey {
     pub ip: u32,
-    pub port: u16,
-    pub fill: u16,
+    pub port: u32,
 }
 
 pub type Backend = [u8; 6];
@@ -26,8 +25,7 @@ pub struct BackendList {
 #[repr(C)]
 pub struct Frontend {
     pub ip: u32,
-    pub port: u16,
-    pub fill: u16,
+    pub port: u32,
 }
 
 #[cfg(feature = "user")]

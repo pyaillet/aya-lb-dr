@@ -76,14 +76,12 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
 
     let lb_key = Frontend {
         ip: dest_addr,
-        port: dest_port,
-        fill: 0, // Necessary, otherwise the struct might be filled with 0xFFFF
+        port: dest_port.into(),
     };
 
     let client_key = ClientKey {
         ip: source_addr,
-        port: source_port,
-        fill: 0, // Necessary, otherwise the struct might be filled with 0xFFFF
+        port: source_port.into(),
     };
 
     if let Some(back) = unsafe { CONNECTIONS.get(&client_key) } {
